@@ -1,0 +1,17 @@
+{
+  "name": "shoe-box",
+  "version": "1.0.0",
+  "description": "Shoe Box - E-commerce static site with admin panel",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "echo 'Static site - no build step required'"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["shoes", "ecommerce", "static"],
+  "author": "Shoe Box",
+  "license": "ISC"
+}
