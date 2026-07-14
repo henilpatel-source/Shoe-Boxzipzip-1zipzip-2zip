@@ -1,5 +1,4 @@
 const http = require('http');
-const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -7,34 +6,18 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 5000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const UPLOADS_DIR = path.join(PUBLIC_DIR, 'uploads');
+const DATA_DIR = path.join(__dirname, 'data');
 
-// Firebase config
-const FB_DB = 'shoe-box-3a237-default-rtdb.firebaseio.com';
-const FB_KEY = 'AIzaSyAeBdqEblXIxnGZzk7i0wHhqwgSX1ABJ7I';
+// Ensure directories exist
+[UPLOADS_DIR, DATA_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-// ── Firebase REST helper ──────────────────────────────────────────────────
-function fbRequest(method, fbPath, data) {
-  return new Promise((resolve, reject) => {
-    const body = data ? JSON.stringify(data) : null;
-    const options = {
-      hostname: FB_DB,
-      path: `${fbPath}?auth=${FB_KEY}`,
-      method,
-      headers: { 'Content-Type': 'application/json', ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}) }
-    };
-    const req = https.request(options, res => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(raw)); } catch { resolve(raw); }
-      });
-    });
-    req.on('error', reject);
-    if (body) req.write(body);
-    req.end();
-  });
+// ── JSON file storage helpers ─────────────────────────────────────────────
+function readData(file) {
+  const p = path.join(DATA_DIR, file);
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return file.includes('config') ? {} : []; }
+}
+function writeData(file, data) {
+  fs.writeFileSync(path.join(DATA_DIR, file), JSON.stringify(data, null, 2));
 }
 
 // ── Multipart file upload parser ─────────────────────────────────────────
@@ -46,15 +29,14 @@ function parseMultipart(body, boundary) {
     const sepIdx = body.indexOf(sep, start);
     if (sepIdx === -1) break;
     start = sepIdx + sep.length;
-    if (body[start] === 0x2d && body[start + 1] === 0x2d) break; // --
-    if (body[start] === 0x0d) start += 2; // \r\n
-    // Find headers end
+    if (body[start] === 0x2d && body[start + 1] === 0x2d) break;
+    if (body[start] === 0x0d) start += 2;
     const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), start);
     if (headerEnd === -1) break;
     const headerStr = body.slice(start, headerEnd).toString();
     start = headerEnd + 4;
     const nextSep = body.indexOf(sep, start);
-    const dataEnd = nextSep === -1 ? body.length : nextSep - 2; // trim \r\n before boundary
+    const dataEnd = nextSep === -1 ? body.length : nextSep - 2;
     const data = body.slice(start, dataEnd);
     start = nextSep;
     const nameMatch = headerStr.match(/name="([^"]+)"/);
@@ -80,7 +62,7 @@ function readBody(req) {
   });
 }
 
-// ── JSON response helpers ─────────────────────────────────────────────────
+// ── Response helpers ──────────────────────────────────────────────────────
 function jsonOk(res, data, status = 200) {
   const body = JSON.stringify(data);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -91,13 +73,7 @@ function jsonErr(res, msg, status = 500) {
   res.end(JSON.stringify({ message: msg }));
 }
 
-// ── Convert Firebase object map → array ──────────────────────────────────
-function fbMapToArray(map) {
-  if (!map || typeof map !== 'object') return [];
-  return Object.entries(map).map(([key, val]) => ({ ...val, _fbKey: key }));
-}
-
-// ── Static file server ────────────────────────────────────────────────────
+// ── MIME types ────────────────────────────────────────────────────────────
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
@@ -107,9 +83,8 @@ const MIME = {
 
 function serveStatic(res, filePath) {
   fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404); res.end('Not Found');
-    } else {
+    if (err) { res.writeHead(404); res.end('Not Found'); }
+    else {
       const ext = path.extname(filePath).toLowerCase();
       res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
       res.end(data);
@@ -128,74 +103,74 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // ── API: Admin session (always return logged in for SPA) ───────────────
-  if (url === '/api/admin/session') {
-    return jsonOk(res, { adminId: 1 });
-  }
+  // ── API: Admin session ─────────────────────────────────────────────────
+  if (url === '/api/admin/session') return jsonOk(res, { adminId: 1 });
 
   // ── API: Products ──────────────────────────────────────────────────────
   if (url === '/api/products' && method === 'GET') {
-    try {
-      const data = await fbRequest('GET', '/products.json');
-      const arr = fbMapToArray(data).map(p => ({
-        id: p._fbKey, name: p.name, price: p.price, discount: p.discount,
-        category: p.category, description: p.description,
-        imageUrl: p.imageUrl, additionalImages: p.additionalImages || []
-      }));
-      return jsonOk(res, arr);
-    } catch (e) { return jsonErr(res, e.message); }
+    const category = new URL(req.url, 'http://localhost').searchParams.get('category');
+    let products = readData('products.json');
+    if (category) products = products.filter(p => p.category && p.category.toLowerCase() === category.toLowerCase());
+    return jsonOk(res, products);
   }
 
   if (url === '/api/products' && method === 'POST') {
     try {
       const body = await readBody(req);
       const product = JSON.parse(body.toString());
+      const products = readData('products.json');
+      product.id = Date.now();
       product.createdAt = new Date().toISOString();
-      const result = await fbRequest('POST', '/products.json', product);
-      return jsonOk(res, { ...product, id: result.name }, 201);
+      products.push(product);
+      writeData('products.json', products);
+      return jsonOk(res, product, 201);
     } catch (e) { return jsonErr(res, e.message); }
   }
 
   // DELETE /api/products/:id
   const productDeleteMatch = url.match(/^\/api\/products\/(.+)$/);
   if (productDeleteMatch && method === 'DELETE') {
-    try {
-      await fbRequest('DELETE', `/products/${productDeleteMatch[1]}.json`);
-      res.writeHead(204); return res.end();
-    } catch (e) { return jsonErr(res, e.message); }
+    const id = String(productDeleteMatch[1]);
+    let products = readData('products.json');
+    products = products.filter(p => String(p.id) !== id);
+    writeData('products.json', products);
+    res.writeHead(204); return res.end();
+  }
+
+  // GET /api/products/:id
+  const productGetMatch = url.match(/^\/api\/products\/(\d+)$/);
+  if (productGetMatch && method === 'GET') {
+    const products = readData('products.json');
+    const product = products.find(p => String(p.id) === productGetMatch[1]);
+    if (!product) return jsonErr(res, 'Product not found', 404);
+    return jsonOk(res, product);
   }
 
   // ── API: Offer config ──────────────────────────────────────────────────
   if (url === '/api/offer-config' && method === 'GET') {
-    try {
-      const data = await fbRequest('GET', '/offerConfig.json');
-      return jsonOk(res, data || { isEnabled: false, message: '', endTime: null });
-    } catch (e) { return jsonErr(res, e.message); }
+    return jsonOk(res, readData('offer-config.json') || { isEnabled: false, message: '', endTime: null });
   }
 
   if (url === '/api/offer-config' && method === 'POST') {
     try {
       const body = await readBody(req);
       const config = JSON.parse(body.toString());
-      await fbRequest('PUT', '/offerConfig.json', config);
+      writeData('offer-config.json', config);
       return jsonOk(res, config);
     } catch (e) { return jsonErr(res, e.message); }
   }
 
   // ── API: Customers ─────────────────────────────────────────────────────
   if (url === '/api/customers' && method === 'GET') {
-    try {
-      const data = await fbRequest('GET', '/customers.json');
-      return jsonOk(res, fbMapToArray(data));
-    } catch (e) { return jsonErr(res, e.message); }
+    return jsonOk(res, readData('customers.json'));
   }
 
   const customerDeleteMatch = url.match(/^\/api\/customers\/(.+)$/);
   if (customerDeleteMatch && method === 'DELETE') {
-    try {
-      await fbRequest('DELETE', `/customers/${customerDeleteMatch[1]}.json`);
-      res.writeHead(204); return res.end();
-    } catch (e) { return jsonErr(res, e.message); }
+    let customers = readData('customers.json');
+    customers = customers.filter(c => String(c.id) !== customerDeleteMatch[1]);
+    writeData('customers.json', customers);
+    res.writeHead(204); return res.end();
   }
 
   // ── API: File Upload ───────────────────────────────────────────────────
@@ -204,42 +179,39 @@ const server = http.createServer(async (req, res) => {
       const contentType = req.headers['content-type'] || '';
       const boundaryMatch = contentType.match(/boundary=(.+)/);
       if (!boundaryMatch) return jsonErr(res, 'No boundary in Content-Type', 400);
-
       const body = await readBody(req);
       const parts = parseMultipart(body, boundaryMatch[1].trim());
       const filePart = parts.find(p => p.filename);
       if (!filePart) return jsonErr(res, 'No file in request', 400);
-
       const ext = path.extname(filePart.filename) || '.jpg';
       const filename = crypto.randomBytes(16).toString('hex') + ext;
-      const savePath = path.join(UPLOADS_DIR, filename);
-      fs.writeFileSync(savePath, filePart.data);
-
+      fs.writeFileSync(path.join(UPLOADS_DIR, filename), filePart.data);
       return jsonOk(res, { url: `/uploads/${filename}` });
     } catch (e) { return jsonErr(res, e.message); }
   }
 
-  // ── Customer auth stubs (so SPA doesn't crash) ─────────────────────────
+  // ── Customer auth stubs ────────────────────────────────────────────────
   if (url === '/api/customer/session') return jsonErr(res, 'Not authenticated', 401);
+  if (url === '/api/customer/logout' && method === 'POST') return jsonOk(res, { success: true });
   if (url === '/api/customer/login' && method === 'POST') return jsonErr(res, 'Invalid credentials', 401);
   if (url === '/api/customer/register' && method === 'POST') {
     try {
       const body = await readBody(req);
       const customer = JSON.parse(body.toString());
+      const customers = readData('customers.json');
+      customer.id = Date.now();
       customer.createdAt = new Date().toISOString();
-      const result = await fbRequest('POST', '/customers.json', customer);
-      return jsonOk(res, { success: true, customer: { id: result.name, ...customer } });
+      customers.push(customer);
+      writeData('customers.json', customers);
+      return jsonOk(res, { success: true, customer });
     } catch (e) { return jsonErr(res, e.message); }
   }
 
   // ── Static files ───────────────────────────────────────────────────────
   let filePath = path.join(PUBLIC_DIR, path.normalize(url).replace(/^(\.\.[\/\\])+/, ''));
-
-  // Directory → try index.html
   if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
     filePath = path.join(filePath, 'index.html');
   }
-
   if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
     return serveStatic(res, filePath);
   }
