@@ -199,7 +199,6 @@
       <span>Logged in as <strong>shoebox</strong></span>
       <button class="btn-logout" onclick="doLogout()">Logout</button>
     </div>
-    <iframe id="admin-frame" src="./index.html#/admin"></iframe>
   </div>
 
   <script>
@@ -209,7 +208,7 @@
 
     function checkSession() {
       if (sessionStorage.getItem(SESSION_KEY) === 'true') {
-        showAdmin();
+        window.location.replace('/admin');
       }
     }
 
@@ -220,24 +219,10 @@
       if (u === ADMIN_USER && p === ADMIN_PASS) {
         sessionStorage.setItem(SESSION_KEY, 'true');
         err.style.display = 'none';
-        showAdmin();
+        window.location.replace('/admin');
       } else {
         err.style.display = 'block';
       }
-    }
-
-    function showAdmin() {
-      document.getElementById('login-page').style.display = 'none';
-      const ap = document.getElementById('admin-page');
-      ap.style.display = 'flex';
-    }
-
-    function doLogout() {
-      sessionStorage.removeItem(SESSION_KEY);
-      document.getElementById('admin-page').style.display = 'none';
-      document.getElementById('login-page').style.display = 'flex';
-      document.getElementById('username').value = '';
-      document.getElementById('password').value = '';
     }
 
     // Allow Enter key to submit

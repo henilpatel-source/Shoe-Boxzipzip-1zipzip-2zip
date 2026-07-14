@@ -15,6 +15,14 @@
   </style>
   </head>
   <body>
+    <script>
+      // Guard: if visiting /admin without auth, redirect to login page
+      if (window.location.pathname === '/admin' || window.location.pathname === '/admin/') {
+        if (sessionStorage.getItem('sb_admin_auth') !== 'true') {
+          window.location.replace('/admin.html');
+        }
+      }
+    </script>
     <div id="root"></div>
     <script type="module" src="/firebase.js"></script>
   </body>

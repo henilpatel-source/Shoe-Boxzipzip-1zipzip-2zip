@@ -128,11 +128,6 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // ── Admin login page (protect /admin route) ────────────────────────────
-  if (url === '/admin' || url === '/admin/') {
-    return serveStatic(res, path.join(PUBLIC_DIR, 'admin.html'));
-  }
-
   // ── API: Admin session (always return logged in for SPA) ───────────────
   if (url === '/api/admin/session') {
     return jsonOk(res, { adminId: 1 });
