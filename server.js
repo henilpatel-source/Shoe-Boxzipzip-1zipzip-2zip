@@ -11,6 +11,26 @@ const DATA_DIR = path.join(__dirname, 'data');
 // Ensure directories exist
 [UPLOADS_DIR, DATA_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
+// ── Admin auth (server-side cookie sessions) ──────────────────────────────
+const ADMIN_USER = 'shoebox';
+const ADMIN_PASS = 'Shoebox@1525';
+const validTokens = new Set(); // in-memory; clears on server restart
+
+function parseCookies(req) {
+  const cookies = {};
+  const header = req.headers.cookie || '';
+  header.split(';').forEach(part => {
+    const [k, ...v] = part.trim().split('=');
+    if (k) cookies[k.trim()] = decodeURIComponent(v.join('='));
+  });
+  return cookies;
+}
+
+function isAdminAuthed(req) {
+  const { sb_admin_token } = parseCookies(req);
+  return sb_admin_token && validTokens.has(sb_admin_token);
+}
+
 // ── JSON file storage helpers ─────────────────────────────────────────────
 function readData(file) {
   const p = path.join(DATA_DIR, file);
@@ -103,8 +123,49 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  // ── Admin login / logout ───────────────────────────────────────────────
+  if (url === '/api/admin/login' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { username, password } = JSON.parse(body.toString());
+      if (username === ADMIN_USER && password === ADMIN_PASS) {
+        const token = crypto.randomBytes(32).toString('hex');
+        validTokens.add(token);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Set-Cookie': `sb_admin_token=${token}; Path=/; HttpOnly; SameSite=Strict`,
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end(JSON.stringify({ success: true }));
+      }
+      return jsonErr(res, 'Invalid credentials', 401);
+    } catch (e) { return jsonErr(res, e.message); }
+  }
+
+  if (url === '/api/admin/logout' && method === 'POST') {
+    const { sb_admin_token } = parseCookies(req);
+    if (sb_admin_token) validTokens.delete(sb_admin_token);
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': 'sb_admin_token=; Path=/; HttpOnly; Max-Age=0',
+      'Access-Control-Allow-Origin': '*'
+    });
+    return res.end(JSON.stringify({ success: true }));
+  }
+
   // ── API: Admin session ─────────────────────────────────────────────────
-  if (url === '/api/admin/session') return jsonOk(res, { adminId: 1 });
+  if (url === '/api/admin/session') {
+    if (!isAdminAuthed(req)) return jsonErr(res, 'Unauthorized', 401);
+    return jsonOk(res, { adminId: 1 });
+  }
+
+  // ── Protect /admin route ───────────────────────────────────────────────
+  if (url === '/admin' || url.startsWith('/admin/')) {
+    if (!isAdminAuthed(req)) {
+      res.writeHead(302, { 'Location': '/admin.html' });
+      return res.end();
+    }
+  }
 
   // ── API: Products ──────────────────────────────────────────────────────
   if (url === '/api/products' && method === 'GET') {

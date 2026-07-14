@@ -197,40 +197,43 @@
   <div id="admin-page">
     <div class="admin-topbar">
       <span>Logged in as <strong>shoebox</strong></span>
-      <button class="btn-logout" onclick="doLogout()">Logout</button>
+      <button class="btn-logout" onclick="fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.replace('/admin.html'))">Logout</button>
     </div>
   </div>
 
   <script>
-    const ADMIN_USER = 'shoebox';
-    const ADMIN_PASS = 'Shoebox@1525';
-    const SESSION_KEY = 'sb_admin_auth';
-
-    function checkSession() {
-      if (sessionStorage.getItem(SESSION_KEY) === 'true') {
-        window.location.replace('/admin');
-      }
-    }
-
-    function doLogin() {
+    async function doLogin() {
       const u = document.getElementById('username').value.trim();
       const p = document.getElementById('password').value;
       const err = document.getElementById('error-msg');
-      if (u === ADMIN_USER && p === ADMIN_PASS) {
-        sessionStorage.setItem(SESSION_KEY, 'true');
-        err.style.display = 'none';
-        window.location.replace('/admin');
-      } else {
+      const btn = document.querySelector('.btn-login');
+      btn.textContent = 'LOGGING IN...';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        if (res.ok) {
+          err.style.display = 'none';
+          window.location.replace('/admin');
+        } else {
+          err.style.display = 'block';
+          btn.textContent = 'LOGIN';
+          btn.disabled = false;
+        }
+      } catch (e) {
+        err.textContent = 'Server error. Try again.';
         err.style.display = 'block';
+        btn.textContent = 'LOGIN';
+        btn.disabled = false;
       }
     }
 
-    // Allow Enter key to submit
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') doLogin();
     });
-
-    checkSession();
   </script>
 
 </body>
