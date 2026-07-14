@@ -1,0 +1,35 @@
+modules = ["nodejs-20"]
+[nix]
+channel = "stable-25_05"
+packages = ["unzip", "zip"]
+
+[agent]
+expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "static-hosting-preview"
+
+[[workflows.workflow]]
+name = "static-hosting-preview"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "sh start.sh"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
